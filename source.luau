@@ -1435,8 +1435,6 @@ function Kavo.CreateLib(kavName, themeList)
                 bname = bname or "Click Me!"
                 tipINf = tipINf or "Tip: Clicking this nothing will happen!"
                 callback = callback or function() end
-                local configId = settingKey(tabName, secName, "keybind", keytext)
-                first = decodeBinding(readSetting(configId, nil), first)
 
                 local row = makeRow(sectionInners, ROW_HEIGHT)
                 local accent = create("Frame", {
@@ -2038,6 +2036,8 @@ function Kavo.CreateLib(kavName, themeList)
                 keytext = keytext or "KeybindText"
                 keyinf = keyinf or "KebindInfo"
                 callback = callback or function() end
+                local configId = settingKey(tabName, secName, "keybind", keytext)
+                first = decodeBinding(readSetting(configId, nil), first)
 
                 local row = makeRow(sectionInners, ROW_HEIGHT)
                 makeLabel(
