@@ -5,6 +5,7 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
 
 local DEFAULT_THEME = {
     SchemeColor = Color3.fromRGB(74, 99, 135),
@@ -90,16 +91,160 @@ local themeStyles = {
 
 local SettingsT = {}
 local ConfigName = "KavoConfig.JSON"
+local saveGeneration = 0
 
-pcall(function()
-    if typeof(readfile) == "function" and typeof(writefile) == "function" then
-        if not pcall(function()
-            readfile(ConfigName)
-        end) then
-            writefile(ConfigName, game:GetService("HttpService"):JSONEncode(SettingsT))
-        end
+local function supportsFileConfigs()
+    return typeof(readfile) == "function" and typeof(writefile) == "function"
+end
+
+local function normalizeConfigName(name)
+    name = tostring(name or "KavoConfig")
+    name = name:gsub("[^%w%-%._ ]", "_")
+    if not name:lower():match("%.json$") then
+        name = name .. ".json"
     end
-end)
+    return name
+end
+
+local function loadSettings()
+    SettingsT = {}
+    if not supportsFileConfigs() then
+        return false
+    end
+
+    local ok, contents = pcall(readfile, ConfigName)
+    if not ok or type(contents) ~= "string" or contents == "" then
+        pcall(writefile, ConfigName, HttpService:JSONEncode(SettingsT))
+        return true
+    end
+
+    local decodedOk, decoded = pcall(function()
+        return HttpService:JSONDecode(contents)
+    end)
+    if decodedOk and typeof(decoded) == "table" then
+        SettingsT = decoded
+        return true
+    end
+
+    pcall(writefile, ConfigName, HttpService:JSONEncode(SettingsT))
+    return false
+end
+
+local function saveSettings()
+    if not supportsFileConfigs() then
+        return false
+    end
+    local ok = pcall(function()
+        writefile(ConfigName, HttpService:JSONEncode(SettingsT))
+    end)
+    return ok
+end
+
+local function queueSave()
+    saveGeneration = saveGeneration + 1
+    local generation = saveGeneration
+    task.delay(0.18, function()
+        if generation == saveGeneration then
+            saveSettings()
+        end
+    end)
+end
+
+local function readSetting(key, fallback)
+    local value = SettingsT[key]
+    if value == nil then
+        return fallback
+    end
+    return value
+end
+
+local function writeSetting(key, value)
+    SettingsT[key] = value
+    queueSave()
+end
+
+local function settingKey(tabName, sectionName, kind, name)
+    return table.concat({
+        tostring(tabName or "Tab"),
+        tostring(sectionName or "Section"),
+        tostring(kind or "Value"),
+        tostring(name or "Unnamed"),
+    }, "/")
+end
+
+local function colorToHex(color)
+    return string.format(
+        "%02X%02X%02X",
+        math.floor(color.R * 255 + 0.5),
+        math.floor(color.G * 255 + 0.5),
+        math.floor(color.B * 255 + 0.5)
+    )
+end
+
+local function colorFromHex(value, fallback)
+    if type(value) ~= "string" then
+        return fallback
+    end
+    value = value:gsub("#", "")
+    if #value ~= 6 then
+        return fallback
+    end
+    local r = tonumber(value:sub(1, 2), 16)
+    local g = tonumber(value:sub(3, 4), 16)
+    local b = tonumber(value:sub(5, 6), 16)
+    if not r or not g or not b then
+        return fallback
+    end
+    return Color3.fromRGB(r, g, b)
+end
+
+local function encodeBinding(binding)
+    if typeof(binding) ~= "EnumItem" then
+        return nil
+    end
+    return binding.EnumType.Name .. ":" .. binding.Name
+end
+
+local function decodeBinding(value, fallback)
+    if type(value) ~= "string" then
+        return fallback
+    end
+    local enumTypeName, itemName = value:match("^([^:]+):(.+)$")
+    if not enumTypeName or not itemName then
+        return fallback
+    end
+    local ok, result = pcall(function()
+        return Enum[enumTypeName][itemName]
+    end)
+    return ok and result or fallback
+end
+
+loadSettings()
+
+function Kavo:SetConfigName(name)
+    ConfigName = normalizeConfigName(name)
+    loadSettings()
+    return self
+end
+
+function Kavo:SaveConfig()
+    saveSettings()
+    return self
+end
+
+function Kavo:GetConfig()
+    local copy = {}
+    for key, value in pairs(SettingsT) do
+        copy[key] = value
+    end
+    return copy
+end
+
+function Kavo:ClearConfig()
+    SettingsT = {}
+    saveSettings()
+    return self
+end
 
 local LibName = tostring(math.random(1, 100)) .. tostring(math.random(1, 50)) .. tostring(math.random(1, 100))
 local activeGui = nil
@@ -422,11 +567,11 @@ function Kavo.CreateLib(kavName, themeList)
 
     activeGui = ScreenGui
 
-    local WINDOW_WIDTH = 560
-    local WINDOW_HEIGHT = 350
-    local HEADER_HEIGHT = 42
-    local SIDEBAR_WIDTH = 142
-    local ROW_HEIGHT = 36
+    local WINDOW_WIDTH = 600
+    local WINDOW_HEIGHT = 380
+    local HEADER_HEIGHT = 44
+    local SIDEBAR_WIDTH = 154
+    local ROW_HEIGHT = 38
 
     local Root = create("Frame", {
         Name = "Window",
@@ -450,7 +595,7 @@ function Kavo.CreateLib(kavName, themeList)
         BorderSizePixel = 0,
         ZIndex = 0,
     }, Root)
-    addCorner(Shadow, 9)
+    addCorner(Shadow, 12)
 
     local Main = create("Frame", {
         Name = "Main",
@@ -460,7 +605,7 @@ function Kavo.CreateLib(kavName, themeList)
         ClipsDescendants = true,
         ZIndex = 1,
     }, Root)
-    addCorner(Main, 8)
+    addCorner(Main, 10)
     local MainStroke = create("UIStroke", {
         Thickness = 1,
         Transparency = 0.18,
@@ -572,10 +717,37 @@ function Kavo.CreateLib(kavName, themeList)
         ZIndex = 3,
     }, Sidebar)
 
+    local SearchShell = create("Frame", {
+        Name = "SearchShell",
+        Position = UDim2.fromOffset(7, 8),
+        Size = UDim2.new(1, -14, 0, 30),
+        BorderSizePixel = 0,
+        ZIndex = 4,
+    }, Sidebar)
+    addCorner(SearchShell, 6)
+    local SearchStroke = create("UIStroke", {
+        Thickness = 1,
+        Transparency = 0.4,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, SearchShell)
+    local SearchBox = create("TextBox", {
+        Name = "TabSearch",
+        Position = UDim2.fromOffset(9, 0),
+        Size = UDim2.new(1, -18, 1, 0),
+        BackgroundTransparency = 1,
+        ClearTextOnFocus = false,
+        Font = Enum.Font.Gotham,
+        PlaceholderText = "Search tabs...",
+        Text = "",
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 5,
+    }, SearchShell)
+
     local TabFrames = create("ScrollingFrame", {
         Name = "tabFrames",
-        Position = UDim2.fromOffset(7, 8),
-        Size = UDim2.new(1, -14, 1, -16),
+        Position = UDim2.fromOffset(7, 44),
+        Size = UDim2.new(1, -14, 1, -52),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         CanvasSize = UDim2.fromOffset(0, 0),
@@ -639,6 +811,10 @@ function Kavo.CreateLib(kavName, themeList)
         Title.TextColor3 = colors.Text
         Sidebar.BackgroundColor3 = colors.Sidebar
         SidebarDivider.BackgroundColor3 = colors.Border
+        SearchShell.BackgroundColor3 = colors.Element
+        SearchStroke.Color = colors.Border
+        SearchBox.TextColor3 = colors.Text
+        SearchBox.PlaceholderColor3 = colors.Muted
         TabFrames.ScrollBarImageColor3 = colors.Accent
         Tooltip.BackgroundColor3 = colors.SurfaceRaised
         TooltipStroke.Color = colors.Border
@@ -1028,6 +1204,9 @@ function Kavo.CreateLib(kavName, themeList)
                 record.Capturing = false
                 record.Display.Text = bindingName(binding)
                 record.Refresh()
+                if record.ConfigKey then
+                    writeSetting(record.ConfigKey, encodeBinding(binding))
+                end
             end
             return
         end
@@ -1058,6 +1237,14 @@ function Kavo.CreateLib(kavName, themeList)
             other.Refresh(true)
         end
     end
+
+    lifecycle:Connect(SearchBox:GetPropertyChangedSignal("Text"), function()
+        local query = string.lower(SearchBox.Text)
+        for _, record in ipairs(tabRecords) do
+            record.Button.Visible = query == ""
+                or string.find(string.lower(record.Name), query, 1, true) ~= nil
+        end
+    end)
 
     function Tabs:NewTab(tabName)
         tabName = tabName or "Tab"
@@ -1119,6 +1306,7 @@ function Kavo.CreateLib(kavName, themeList)
         end)
 
         local record = {
+            Name = tabName,
             Button = tabButton,
             Indicator = indicator,
             Page = page,
@@ -1247,6 +1435,8 @@ function Kavo.CreateLib(kavName, themeList)
                 bname = bname or "Click Me!"
                 tipINf = tipINf or "Tip: Clicking this nothing will happen!"
                 callback = callback or function() end
+                local configId = settingKey(tabName, secName, "keybind", keytext)
+                first = decodeBinding(readSetting(configId, nil), first)
 
                 local row = makeRow(sectionInners, ROW_HEIGHT)
                 local accent = create("Frame", {
@@ -1288,9 +1478,12 @@ function Kavo.CreateLib(kavName, themeList)
             end
 
             function Elements:NewTextBox(tname, tTip, callback)
+                local TextBoxFunctions = {}
                 tname = tname or "Textbox"
                 tTip = tTip or "Gets a value of Textbox"
                 callback = callback or function() end
+                local configId = settingKey(tabName, secName, "textbox", tname)
+                local savedText = tostring(readSetting(configId, ""))
 
                 local row = makeRow(sectionInners, ROW_HEIGHT)
                 makeLabel(
@@ -1312,7 +1505,7 @@ function Kavo.CreateLib(kavName, themeList)
                     ClearTextOnFocus = false,
                     Font = Enum.Font.Gotham,
                     PlaceholderText = "Type here",
-                    Text = "",
+                    Text = savedText,
                     TextSize = 12,
                     TextXAlignment = Enum.TextXAlignment.Left,
                     ZIndex = 9,
@@ -1359,12 +1552,26 @@ function Kavo.CreateLib(kavName, themeList)
                 lifecycle:Connect(textBox.FocusLost, function(enterPressed)
                     focused = false
                     refreshInput(true)
+                    writeSetting(configId, textBox.Text)
                     if enterPressed then
                         callback(textBox.Text)
-                        textBox.Text = ""
                     end
                 end)
                 makeInfoButton(row, tTip)
+
+                function TextBoxFunctions:SetValue(newValue, fireCallback)
+                    textBox.Text = tostring(newValue or "")
+                    writeSetting(configId, textBox.Text)
+                    if fireCallback then
+                        callback(textBox.Text)
+                    end
+                end
+
+                function TextBoxFunctions:GetValue()
+                    return textBox.Text
+                end
+
+                return TextBoxFunctions
             end
 
             function Elements:NewToggle(tname, nTip, callback)
@@ -1372,8 +1579,8 @@ function Kavo.CreateLib(kavName, themeList)
                 tname = tname or "Toggle"
                 nTip = nTip or "Prints Current Toggle State"
                 callback = callback or function() end
-                local toggled = false
-                table.insert(SettingsT, tname)
+                local configId = settingKey(tabName, secName, "toggle", tname)
+                local toggled = readSetting(configId, false) == true
 
                 local row = makeRow(sectionInners, ROW_HEIGHT)
                 local nameLabel = makeLabel(
@@ -1422,6 +1629,7 @@ function Kavo.CreateLib(kavName, themeList)
                 local function setToggle(value, fireCallback)
                     toggled = value == true
                     refreshToggle(true)
+                    writeSetting(configId, toggled)
                     if fireCallback then
                         callback(toggled)
                     end
@@ -1449,6 +1657,14 @@ function Kavo.CreateLib(kavName, themeList)
                     setToggle(isTogOn, true)
                 end
 
+                function TogFunction:SetValue(value, fireCallback)
+                    setToggle(value, fireCallback == true)
+                end
+
+                function TogFunction:GetValue()
+                    return toggled
+                end
+
                 return TogFunction
             end
 
@@ -1459,9 +1675,11 @@ function Kavo.CreateLib(kavName, themeList)
                 minvalue = tonumber(minvalue) or 16
                 callback = callback or function() end
 
+                local SliderFunctions = {}
                 local minimum = math.min(minvalue, maxvalue)
                 local maximum = math.max(minvalue, maxvalue)
-                local value = minimum
+                local configId = settingKey(tabName, secName, "slider", slidInf)
+                local value = math.clamp(tonumber(readSetting(configId, minimum)) or minimum, minimum, maximum)
 
                 local row = makeRow(sectionInners, 45)
                 makeLabel(
@@ -1520,7 +1738,9 @@ function Kavo.CreateLib(kavName, themeList)
                     Transparency = 0.2,
                 }, knob)
 
-                local ratio = 0
+                local ratio = maximum == minimum and 0 or (value - minimum) / (maximum - minimum)
+                valueLabel.Text = tostring(value)
+
                 local function refreshSlider(animate)
                     local colors = palette()
                     local fillSize = UDim2.new(ratio, 0, 1, 0)
@@ -1546,6 +1766,7 @@ function Kavo.CreateLib(kavName, themeList)
                     value = nextValue
                     valueLabel.Text = tostring(value)
                     refreshSlider(true)
+                    writeSetting(configId, value)
                     callback(value)
                 end
 
@@ -1558,6 +1779,23 @@ function Kavo.CreateLib(kavName, themeList)
                     end
                 end)
                 makeInfoButton(row, slidTip)
+
+                function SliderFunctions:SetValue(newValue, fireCallback)
+                    value = math.clamp(tonumber(newValue) or minimum, minimum, maximum)
+                    ratio = maximum == minimum and 0 or (value - minimum) / (maximum - minimum)
+                    valueLabel.Text = tostring(value)
+                    refreshSlider(true)
+                    writeSetting(configId, value)
+                    if fireCallback then
+                        callback(value)
+                    end
+                end
+
+                function SliderFunctions:GetValue()
+                    return value
+                end
+
+                return SliderFunctions
             end
 
             function Elements:NewDropdown(dropname, dropinf, list, callback)
@@ -1569,8 +1807,22 @@ function Kavo.CreateLib(kavName, themeList)
 
                 local opened = false
                 local options = {}
-                local selectedValue = nil
+                local configId = settingKey(tabName, secName, "dropdown", dropname)
+                local selectedValue = readSetting(configId, nil)
                 local optionHeight = 30
+
+                local function isValidSelection(value)
+                    for _, optionValue in next, list do
+                        if optionValue == value then
+                            return true
+                        end
+                    end
+                    return false
+                end
+
+                if not isValidSelection(selectedValue) then
+                    selectedValue = nil
+                end
 
                 local container, containerStroke = makeRow(sectionInners, ROW_HEIGHT)
                 container.Name = "dropFrame"
@@ -1588,7 +1840,7 @@ function Kavo.CreateLib(kavName, themeList)
                     Size = UDim2.new(0.45, -12, 0, ROW_HEIGHT),
                     BackgroundTransparency = 1,
                     Font = Enum.Font.Gotham,
-                    Text = "Select",
+                    Text = selectedValue ~= nil and tostring(selectedValue) or "Select",
                     TextSize = 12,
                     TextXAlignment = Enum.TextXAlignment.Right,
                     TextTruncate = Enum.TextTruncate.AtEnd,
@@ -1731,6 +1983,7 @@ function Kavo.CreateLib(kavName, themeList)
                         selectedValue = optionValue
                         selectionLabel.Text = tostring(optionValue)
                         selectionLabel.TextColor3 = palette().Accent
+                        writeSetting(configId, optionValue)
                         callback(optionValue)
                         setOpened(false)
                     end))
@@ -1752,7 +2005,30 @@ function Kavo.CreateLib(kavName, themeList)
                 rebuild(list)
 
                 function DropFunction:Refresh(newList)
-                    rebuild(newList or {})
+                    list = newList or {}
+                    rebuild(list)
+                    if not isValidSelection(selectedValue) then
+                        selectedValue = nil
+                        selectionLabel.Text = "Select"
+                    end
+                end
+
+                function DropFunction:SetValue(newValue, fireCallback)
+                    if not isValidSelection(newValue) then
+                        return false
+                    end
+                    selectedValue = newValue
+                    selectionLabel.Text = tostring(newValue)
+                    selectionLabel.TextColor3 = palette().Accent
+                    writeSetting(configId, newValue)
+                    if fireCallback then
+                        callback(newValue)
+                    end
+                    return true
+                end
+
+                function DropFunction:GetValue()
+                    return selectedValue
                 end
 
                 return DropFunction
@@ -1793,6 +2069,7 @@ function Kavo.CreateLib(kavName, themeList)
                 }, bindButton)
 
                 local record = {
+                    ConfigKey = configId,
                     Binding = first,
                     Callback = callback,
                     Display = bindButton,
@@ -1842,6 +2119,8 @@ function Kavo.CreateLib(kavName, themeList)
                 colInf = colInf or "Select a color"
                 defcolor = defcolor or Color3.fromRGB(1, 1, 1)
                 callback = callback or function() end
+                local configId = settingKey(tabName, secName, "color", colText)
+                defcolor = colorFromHex(readSetting(configId, nil), defcolor)
 
                 local hue, saturation, value = Color3.toHSV(defcolor)
                 local colorOpened = false
@@ -2069,6 +2348,7 @@ function Kavo.CreateLib(kavName, themeList)
                     saturation = math.clamp(relativeX, 0, 1)
                     value = 1 - math.clamp(relativeY, 0, 1)
                     refreshColor(true)
+                    writeSetting(configId, colorToHex(currentColor()))
                 end
 
                 local function setHueFromPointer(position)
@@ -2078,6 +2358,7 @@ function Kavo.CreateLib(kavName, themeList)
                     local relativeY = (position.Y - hueBar.AbsolutePosition.Y) / math.max(hueBar.AbsoluteSize.Y, 1)
                     hue = math.clamp(relativeY, 0, 1)
                     refreshColor(true)
+                    writeSetting(configId, colorToHex(currentColor()))
                 end
 
                 bindTheme(function(colors)
